@@ -1,0 +1,58 @@
+from pyspark.ml.classification import LogisticRegression
+from pyspark.sql.functions import isnan, when, count, col, mean, filter from pyspark.sql import SparkSession
+import pyspark.sql.functions as F
+from pyspark.ml.linalg import Vectors
+from pyspark.ml.feature import VectorAssembler, StringIndexer
+from pyspark.mllib.evaluation import MulticlassMetrics
+from sklearn.metrics import confusion_matrix
+from sklearn.metrics import classification_report
+import matplotlib.pyplot as plt
+import numpy as np
+
+transaction_df = spark.read.option("inferSchema", True).csv("gs://final_project_0820/Final_transactions.csv", header=True)
+
+transaction_df1 = transaction_df
+
+acc_df = spark.read.option("inferSchema", True).csv("gs://final_project_0820/accounts.csv", header=True)
+
+transaction_df1 = transaction_df1.join(acc_df,transaction_df1.beneacct ==  acc_df.acctid,"left")
+
+transaction_df2 = transaction_df1.na.fill(value=0)
+
+transaction_df2 = transaction_df2.withColumn("priorsarcount", when(transaction_df2.priorsarcount == 'false', 0).when(transaction_df2.priorsarcount == 'true',1))
+
+transaction_df2 = transaction_df2.drop("txtype", "_c0", "alertid", "acctid", "dsplynm", "type", "acctstat", "acctrptng_crncy", "branchid"
+                    , "opendt", "closedt", "initialdeposit", "txbehavior_id", "bankid", "firstname", "lastname", "streetaddr", "city", "state", "country", "zip",
+                    "gender", "birthdate", "ssn", "lon", "lat")
+                    
+assembler = VectorAssembler(
+    inputCols=["seven_sum", "seven_count", "fourteen_sum", "fourteen_count", "thirty_sum", "thirty_count", "baseamt", "priorsarcount"],
+    outputCol="features")
+
+transaction_df2 = assembler.transform(transaction_df2)
+
+transaction_df2 = transaction_df2.withColumn("label", when(transaction_df2.issar == 'false', 0).when(transaction_df2.issar == 'true',1))
+
+train, test = transaction_df2.randomSplit([0.7, 0.3], seed=12345)
+
+df_a = train.filter(train['label'] == 0)
+df_b = train.filter(train['label'] == 1)
+
+ratio = 1274.93
+ratio = float(ratio)
+
+df_b_overampled = df_b.sample(withReplacement=True, fraction=ratio, seed=1)
+df = df_a.unionAll(df_b_overampled)
+
+lr = LogisticRegression(maxIter=10, labelCol="label", threshold=0.9275)
+model = lr.fit(df)
+
+predictions = model.transform(test)
+
+predictions.write.format("orc").save('gs://final_project_0820/Predictions')
+
+y_pred = predictions.select("prediction").toPandas()
+y_test = predictions.select("label").toPandas()
+
+print(confusion_matrix(y_pred, y_test))
+print(classification_report(y_test,y_pred))
